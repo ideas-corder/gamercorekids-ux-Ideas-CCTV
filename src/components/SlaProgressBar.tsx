@@ -35,7 +35,7 @@ export const SlaProgressBar: React.FC<SlaProgressBarProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const isResolved = ticket.status === 'RESOLVED' || ticket.status === 'CLOSED';
+  const isResolved = ticket.status === 'RESOLVED';
   const targetTotalHours = SLA_TARGET_HOURS[ticket.priority] || 24;
   const targetTotalMs = targetTotalHours * 60 * 60 * 1000;
 

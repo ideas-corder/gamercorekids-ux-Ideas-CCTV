@@ -56,15 +56,8 @@ export type TicketStatus =
   | 'NEW'
   | 'OPEN'
   | 'ASSIGNED'
-  | 'ACKNOWLEDGED'
-  | 'UNDER INVESTIGATION'
   | 'IN PROGRESS'
-  | 'PENDING'
-  | 'RESOLVED'
-  | 'VERIFICATION'
-  | 'CLOSED'
-  | 'REOPENED'
-  | 'ARCHIVED';
+  | 'RESOLVED';
 
 export type TicketPriority = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 export type TicketSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
@@ -97,6 +90,7 @@ export interface TicketHistoryItem {
 export interface Ticket {
   id: string;
   ticket_number: string;
+  record_type?: 'OBSERVATION' | 'TECHNICAL';
   subject: string;
   description: string;
   department_id: string;

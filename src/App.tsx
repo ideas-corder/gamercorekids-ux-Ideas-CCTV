@@ -27,6 +27,7 @@ import { NewTicketModal } from './components/NewTicketModal';
 import { HostingerDbModal } from './components/HostingerDbModal';
 import { CommandPalette } from './components/CommandPalette';
 import { LoginPage } from './components/LoginPage';
+import { ISSUE_CATEGORIES } from './constants/categories';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
@@ -586,8 +587,17 @@ export default function App() {
         <NewTicketModal
           departments={departments}
           locations={locations}
+          regions={regions}
           users={users}
           currentUser={currentUser!}
+          categories={[
+            ...new Set([
+              ...((settings?.general as any)?.customCategories || []).map(
+                (c: { name: string }) => c.name
+              ),
+              ...ISSUE_CATEGORIES
+            ])
+          ]}
           onClose={() => setIsNewTicketOpen(false)}
           onSubmit={handleCreateTicket}
         />

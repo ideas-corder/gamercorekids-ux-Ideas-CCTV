@@ -326,3 +326,35 @@ export async function verifyAdminPassword(password: string): Promise<boolean> {
   });
   return !!data?.verified;
 }
+
+export async function importJsonDatabase(
+  target: string,
+  payload: any,
+  mode: 'merge' | 'replace' = 'merge'
+): Promise<{
+  success: boolean;
+  target: string;
+  count: number;
+  created: number;
+  updated: number;
+  message: string;
+}> {
+  const res = await fetch(`${API_BASE}/database/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ target, payload, mode })
+  });
+
+  const data = await res.json().catch(() => ({
+    error: 'Invalid response from server'
+  }));
+
+  if (!res.ok) {
+    throw new Error(
+      data?.error || 'Failed to upload or import JSON database file'
+    );
+  }
+
+  return data;
+}

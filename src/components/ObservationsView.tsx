@@ -51,7 +51,7 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
   onDeleteTicket,
   slaEngineEnabled = true
 }) => {
-  const [selectedFilter, setSelectedFilter] = useState<'all' | 'new' | 'open' | 'in_progress' | 'resolved' | 'closed'>('all');
+  const [selectedFilter, setSelectedFilter] = useState<'all' | 'new' | 'open' | 'in_progress' | 'resolved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
@@ -69,12 +69,11 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
   const openCount = tickets.filter(t => t.status === 'OPEN').length;
   const inProgressCount = tickets.filter(t => t.status === 'IN PROGRESS').length;
   const resolvedCount = tickets.filter(t => t.status === 'RESOLVED').length;
-  const closedCount = tickets.filter(t => t.status === 'CLOSED').length;
 
   const totalActiveQueue = openCount + newCount;
   const openPercent = totalCount > 0 ? Math.round(((openCount + newCount) / totalCount) * 100) : 0;
   const inProgressPercent = totalCount > 0 ? Math.round((inProgressCount / totalCount) * 100) : 0;
-  const resolvedPercent = totalCount > 0 ? Math.round(((resolvedCount + closedCount) / totalCount) * 100) : 0;
+  const resolvedPercent = totalCount > 0 ? Math.round((resolvedCount / totalCount) * 100) : 0;
 
   // Filter application
   const filteredTickets = tickets.filter(t => {
@@ -83,7 +82,6 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
     if (selectedFilter === 'open' && t.status !== 'OPEN') return false;
     if (selectedFilter === 'in_progress' && t.status !== 'IN PROGRESS') return false;
     if (selectedFilter === 'resolved' && t.status !== 'RESOLVED') return false;
-    if (selectedFilter === 'closed' && t.status !== 'CLOSED') return false;
 
     // Search query
     if (searchQuery) {
@@ -260,7 +258,7 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
             <div className="text-[11px] text-slate-500 mb-3">Verified functional, closed & completed operational logs</div>
             <div className="flex items-baseline justify-between">
               <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-extrabold text-slate-900 tabular-nums">{resolvedCount + closedCount}</span>
+                <span className="text-3xl font-extrabold text-slate-900 tabular-nums">{resolvedCount}</span>
                 <span className="text-xs font-semibold text-emerald-600">{resolvedPercent}% resolution rate</span>
               </div>
               <span className="text-xs font-semibold text-slate-500 hover:text-emerald-700 flex items-center gap-1">
@@ -282,7 +280,7 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
                 ● In Progress: {inProgressCount} ({inProgressPercent}%)
               </span>
               <span className="flex items-center gap-1 text-emerald-600 font-semibold">
-                ● Resolved: {resolvedCount + closedCount} ({resolvedPercent}%)
+                ● Resolved: {resolvedCount} ({resolvedPercent}%)
               </span>
             </div>
           </div>
@@ -359,16 +357,6 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
               ● Resolved <span className="ml-1 opacity-80">{resolvedCount}</span>
             </button>
 
-            <button
-              onClick={() => setSelectedFilter('closed')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                selectedFilter === 'closed'
-                  ? 'bg-slate-700 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              Closed <span className="ml-1 opacity-80">{closedCount}</span>
-            </button>
           </div>
 
           {/* Search Box & Quick Controls */}
@@ -419,15 +407,8 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
                 <option value="NEW">NEW</option>
                 <option value="OPEN">OPEN</option>
                 <option value="ASSIGNED">ASSIGNED</option>
-                <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
-                <option value="UNDER INVESTIGATION">UNDER INVESTIGATION</option>
                 <option value="IN PROGRESS">IN PROGRESS</option>
-                <option value="PENDING">PENDING</option>
                 <option value="RESOLVED">RESOLVED</option>
-                <option value="VERIFICATION">VERIFICATION</option>
-                <option value="CLOSED">CLOSED</option>
-                <option value="REOPENED">REOPENED</option>
-                <option value="ARCHIVED">ARCHIVED</option>
               </select>
             </div>
 
@@ -541,12 +522,12 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
-              const closed = filteredTickets.filter(t => t.status === 'RESOLVED' || t.status === 'CLOSED');
-              setSelectedTicketIds(closed.map(t => t.id));
+              const resolved = filteredTickets.filter(t => t.status === 'RESOLVED');
+              setSelectedTicketIds(resolved.map(t => t.id));
             }}
             className="text-xs text-slate-600 hover:text-slate-900 font-medium"
           >
-            Select Resolved/Closed
+            Select Resolved
           </button>
           <button
             onClick={() => window.print()}
@@ -609,15 +590,8 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
                     NEW: 'bg-blue-50 text-blue-700 border-blue-200',
                     OPEN: 'bg-sky-50 text-sky-700 border-sky-200',
                     ASSIGNED: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-                    ACKNOWLEDGED: 'bg-teal-50 text-teal-700 border-teal-200',
-                    'UNDER INVESTIGATION': 'bg-cyan-50 text-cyan-700 border-cyan-200',
                     'IN PROGRESS': 'bg-amber-50 text-amber-700 border-amber-200',
-                    PENDING: 'bg-orange-50 text-orange-700 border-orange-200',
                     RESOLVED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-                    VERIFICATION: 'bg-purple-50 text-purple-700 border-purple-200',
-                    CLOSED: 'bg-slate-100 text-slate-700 border-slate-200',
-                    REOPENED: 'bg-rose-100 text-rose-800 border-rose-200',
-                    ARCHIVED: 'bg-slate-200 text-slate-800 border-slate-300'
                   }[ticket.status] || 'bg-slate-100 text-slate-700 border-slate-200';
 
                   return (
@@ -674,16 +648,9 @@ export const ObservationsView: React.FC<ObservationsViewProps> = ({
                           <option value="NEW">NEW</option>
                           <option value="OPEN">OPEN</option>
                           <option value="ASSIGNED">ASSIGNED</option>
-                          <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
-                          <option value="UNDER INVESTIGATION">UNDER INVESTIGATION</option>
-                          <option value="IN PROGRESS">IN PROGRESS</option>
-                          <option value="PENDING">PENDING</option>
-                          <option value="RESOLVED">RESOLVED</option>
-                          <option value="VERIFICATION">VERIFICATION</option>
-                          <option value="CLOSED">CLOSED</option>
-                          <option value="REOPENED">REOPENED</option>
-                          <option value="ARCHIVED">ARCHIVED</option>
-                        </select>
+                                              <option value="IN PROGRESS">IN PROGRESS</option>
+                                    <option value="RESOLVED">RESOLVED</option>
+                                                                </select>
                       </td>
 
                       {/* Priority Dropdown */}

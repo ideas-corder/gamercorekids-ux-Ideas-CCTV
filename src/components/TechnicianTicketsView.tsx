@@ -82,14 +82,12 @@ export const TechnicianTicketsView: React.FC<TechnicianTicketsViewProps> = ({
   const openCount = myTickets.filter(t => t.status === 'OPEN').length;
   const inProgressCount = myTickets.filter(t => t.status === 'IN PROGRESS').length;
   const resolvedCount = myTickets.filter(t => t.status === 'RESOLVED').length;
-  const closedCount = myTickets.filter(t => t.status === 'CLOSED').length;
 
   const filteredTickets = myTickets.filter(t => {
     if (selectedFilter === 'new' && t.status !== 'NEW') return false;
     if (selectedFilter === 'open' && t.status !== 'OPEN') return false;
     if (selectedFilter === 'in_progress' && t.status !== 'IN PROGRESS') return false;
     if (selectedFilter === 'resolved' && t.status !== 'RESOLVED') return false;
-    if (selectedFilter === 'closed' && t.status !== 'CLOSED') return false;
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -260,10 +258,10 @@ export const TechnicianTicketsView: React.FC<TechnicianTicketsViewProps> = ({
                 <CheckCircle2 className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-[11px] text-slate-500 mb-3">Verified functional, closed & completed operational logs</div>
+            <div className="text-[11px] text-slate-500 mb-3">Resolved and completed operational logs</div>
             <div className="flex items-baseline justify-between">
               <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-extrabold text-slate-900 tabular-nums">{resolvedCount + closedCount}</span>
+                <span className="text-3xl font-extrabold text-slate-900 tabular-nums">{resolvedCount}</span>
                 <span className="text-xs font-semibold text-emerald-600">0% resolution rate</span>
               </div>
               <span className="text-xs font-semibold text-slate-500 hover:text-emerald-700 flex items-center gap-1">
@@ -337,16 +335,6 @@ export const TechnicianTicketsView: React.FC<TechnicianTicketsViewProps> = ({
               ● Resolved <span className="ml-1 opacity-80">{resolvedCount}</span>
             </button>
 
-            <button
-              onClick={() => setSelectedFilter('closed')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                selectedFilter === 'closed'
-                  ? 'bg-slate-700 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              Closed <span className="ml-1 opacity-80">{closedCount}</span>
-            </button>
           </div>
 
           <div className="flex items-center gap-2 flex-1 max-w-lg">
@@ -399,12 +387,7 @@ export const TechnicianTicketsView: React.FC<TechnicianTicketsViewProps> = ({
                 <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
                 <option value="UNDER INVESTIGATION">UNDER INVESTIGATION</option>
                 <option value="IN PROGRESS">IN PROGRESS</option>
-                <option value="PENDING">PENDING</option>
                 <option value="RESOLVED">RESOLVED</option>
-                <option value="VERIFICATION">VERIFICATION</option>
-                <option value="CLOSED">CLOSED</option>
-                <option value="REOPENED">REOPENED</option>
-                <option value="ARCHIVED">ARCHIVED</option>
               </select>
             </div>
 
@@ -554,12 +537,27 @@ export const TechnicianTicketsView: React.FC<TechnicianTicketsViewProps> = ({
                       {ticket.subject}
                     </td>
                     <td className="py-3.5 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                        {
+                          NEW: 'bg-indigo-600 text-white',
+                          OPEN: 'bg-sky-600 text-white',
+                          ASSIGNED: 'bg-blue-600 text-white',
+                          'IN PROGRESS': 'bg-purple-600 text-white',
+                          RESOLVED: 'bg-slate-900 text-emerald-400 border border-emerald-500/40'
+                        }[ticket.status] || 'bg-slate-800 text-white'
+                      }`}>
                         {ticket.status}
                       </span>
                     </td>
                     <td className="py-3.5 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                        {
+                          CRITICAL: 'bg-gradient-to-r from-rose-600 to-red-600 text-white',
+                          HIGH: 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950',
+                          MEDIUM: 'bg-gradient-to-r from-sky-500 to-blue-600 text-white',
+                          LOW: 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white'
+                        }[ticket.priority] || 'bg-slate-700 text-white'
+                      }`}>
                         {ticket.priority}
                       </span>
                     </td>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Upload,
@@ -8,40 +8,119 @@ import {
   MapPin,
   Clock,
   ShieldCheck,
-  Check
+  Check,
+  ZoomIn,
+  Download,
+  Mic
 } from 'lucide-react';
-import { Department, Location, User, Ticket } from '../types';
+import { Department, Location, User, Ticket, Region } from '../types';
+import { ISSUE_CATEGORIES } from '../constants/categories';
+import { VoiceRecorder } from './VoiceRecorder';
+import { ImageLightboxModal } from './ImageLightboxModal';
+import { downloadImage } from '../utils/download';
 
 interface NewTicketModalProps {
   departments: Department[];
   locations: Location[];
+  regions?: Region[];
   users: User[];
   currentUser: User;
   onClose: () => void;
   onSubmit: (ticketData: Partial<Ticket>) => void;
   slaEngineEnabled?: boolean;
+  categories?: string[];
 }
 
 export const NewTicketModal: React.FC<NewTicketModalProps> = ({
   departments,
   locations,
+  regions,
   users,
   currentUser,
   onClose,
   onSubmit,
-  slaEngineEnabled = true
+  slaEngineEnabled = true,
+  categories
 }) => {
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
   const [departmentId, setDepartmentId] = useState(departments[0]?.id || 'dept_surveillance');
-  const [locationId, setLocationId] = useState(locations[0]?.id || 'loc_001');
-  const [category, setCategory] = useState('GENERAL');
+
+  const [recordType, setRecordType] = useState<'OBSERVATION' | 'TECHNICAL'>(
+    currentUser.role === 'TECHNICIAN' ? 'TECHNICAL' : 'OBSERVATION'
+  );
+
+  const [selectedRegion, setSelectedRegion] = useState('ALL');
+  const [locationId, setLocationId] = useState('');
+  const [category, setCategory] = useState('Access Violation');
+  const [customCategory, setCustomCategory] = useState('');
+
   const [priority, setPriority] = useState<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>('MEDIUM');
-  const [assignedUserId, setAssignedUserId] = useState('');
+
+  const [assignedUserId, setAssignedUserId] = useState(
+    currentUser.role === 'TECHNICIAN' ? currentUser.id : ''
+  );
+
   const [evidenceImages, setEvidenceImages] = useState<string[]>([]);
   const [evidenceWarning, setEvidenceWarning] = useState<string | null>(null);
 
-  const selectedLocation = locations.find(l => l.id === locationId) || locations[0];
+  const [attachedVoiceNote, setAttachedVoiceNote] = useState<string | null>(null);
+  const [attachedVoiceDuration, setAttachedVoiceDuration] = useState<number>(15);
+
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+
+  const availableRegions = useMemo(() => {
+    const regionMap = new Map<string, string>();
+
+    locations.forEach(location => {
+      const regionName = String(location.region_name || '').trim();
+      const regionId = String(location.region_id || '').trim();
+
+      if (regionName) {
+        regionMap.set(regionId || regionName, regionName);
+      }
+    });
+
+    return Array.from(regionMap.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [locations]);
+
+  const filteredLocations = useMemo(() => {
+    if (!selectedRegion || selectedRegion === 'ALL') {
+      return locations;
+    }
+
+    return locations.filter(location => {
+      return (
+        location.region_name === selectedRegion ||
+        location.region_id === selectedRegion
+      );
+    });
+  }, [locations, selectedRegion]);
+
+  useEffect(() => {
+    if (!locationId) {
+      if (filteredLocations[0]) {
+        setLocationId(filteredLocations[0].id);
+      }
+      return;
+    }
+
+    const stillValid = filteredLocations.some(
+      location => location.id === locationId
+    );
+
+    if (!stillValid && filteredLocations[0]) {
+      setLocationId(filteredLocations[0].id);
+    }
+  }, [filteredLocations, locationId]);
+
+  const selectedLocation =
+    locations.find(l => l.id === locationId) ||
+    filteredLocations[0] ||
+    locations[0];
   const selectedDept = departments.find(d => d.id === departmentId) || departments[0];
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -91,24 +170,55 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
     e.preventDefault();
     if (!subject.trim()) return;
 
-    const assignedUser = users.find(u => u.id === assignedUserId);
+    let finalAssignedId = assignedUserId;
+    let finalAssignedName = 'Unassigned';
+
+    if (assignedUserId) {
+      const assignedUser = users.find(u => u.id === assignedUserId);
+      finalAssignedName = assignedUser ? assignedUser.name : 'Unassigned';
+    } else if (currentUser.role === 'TECHNICIAN') {
+      finalAssignedId = currentUser.id;
+      finalAssignedName = currentUser.name;
+    }
+
+    const initialStatus = finalAssignedId ? 'ASSIGNED' : 'NEW';
+
+    const finalCategory =
+      category === 'Custom'
+        ? (customCategory.trim() || 'Custom')
+        : category;
+
+    const initialComments = attachedVoiceNote
+      ? [{
+          id: `cmt-${Date.now()}`,
+          ticket_id: 'pending',
+          user_id: currentUser.id,
+          user_name: currentUser.name,
+          user_role: currentUser.role,
+          comment: `[VOICE_NOTE:${attachedVoiceDuration}s] ${attachedVoiceNote}`,
+          created_at: new Date().toISOString(),
+          is_internal: false
+        }]
+      : [];
 
     onSubmit({
-      subject,
+      record_type: recordType,
+      subject: subject.trim(),
       description,
       department_id: departmentId,
       department_name: selectedDept?.name || 'Security Operations & Surveillance',
       location_id: locationId,
       location_name: selectedLocation?.name || 'Agency Jaranwala',
-      region_name: selectedLocation?.region_name || 'Central',
-      category,
+      region_name: selectedLocation?.region_name || selectedRegion || 'Central',
+      category: finalCategory,
       priority,
-      status: 'NEW',
-      assigned_technician_id: assignedUserId || null,
-      assigned_technician_name: assignedUser ? assignedUser.name : 'Unassigned',
+      status: initialStatus,
+      assigned_technician_id: finalAssignedId || null,
+      assigned_technician_name: finalAssignedName,
       evidence_images: evidenceImages,
       created_by_user_id: currentUser.id,
-      created_by_name: currentUser.name
+      created_by_name: currentUser.name,
+      comments: initialComments
     });
 
     onClose();
@@ -150,10 +260,30 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
             />
           </div>
 
-          {/* Department & Priority */}
+          {/* Record Type & Destination */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Operational Department *</label>
+              <label className="font-bold text-slate-700 block mb-1">
+                Record Type *
+              </label>
+              <select
+                value={recordType}
+                onChange={e =>
+                  setRecordType(
+                    e.target.value as 'OBSERVATION' | 'TECHNICAL'
+                  )
+                }
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none text-slate-800"
+              >
+                <option value="OBSERVATION">Observation</option>
+                <option value="TECHNICAL">Technical</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 block mb-1">
+                Operational Department *
+              </label>
               <select
                 value={departmentId}
                 onChange={e => setDepartmentId(e.target.value)}
@@ -166,69 +296,118 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
                 ))}
               </select>
             </div>
-
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Priority Tier *</label>
-              <select
-                value={priority}
-                onChange={e => setPriority(e.target.value as any)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none font-bold text-slate-800"
-              >
-                <option value="CRITICAL">🔴 CRITICAL (2h resolution)</option>
-                <option value="HIGH">🟡 HIGH (4h resolution)</option>
-                <option value="MEDIUM">🔵 MEDIUM (24h resolution)</option>
-                <option value="LOW">⚪ LOW (72h resolution)</option>
-              </select>
-            </div>
           </div>
 
-          {/* Location & Category */}
+          {/* Region & Location */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Location / Branch Site ({locations.length}) *</label>
+              <label className="font-bold text-slate-700 block mb-1">
+                Region *
+              </label>
               <select
-                value={locationId}
-                onChange={e => setLocationId(e.target.value)}
+                value={selectedRegion}
+                onChange={e => setSelectedRegion(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none text-slate-800"
               >
-                {locations.map(loc => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name} ({loc.branch_code} · {loc.region_name})
+                <option value="ALL">All Regions</option>
+                {availableRegions.map(region => (
+                  <option key={region.id} value={region.id}>
+                    {region.name}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Issue Category</label>
+              <label className="font-bold text-slate-700 block mb-1">
+                Location / Branch Site ({filteredLocations.length}) *
+              </label>
+              <select
+                value={locationId}
+                onChange={e => setLocationId(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none text-slate-800"
+              >
+                {filteredLocations.map(loc => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name} ({loc.branch_code} · {loc.region_name})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Issue Category & Technician */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="font-bold text-slate-700 block mb-1">
+                Issue Category *
+              </label>
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none text-slate-800"
               >
-                <option value="GENERAL">GENERAL</option>
-                <option value="HARDWARE / CAMERA">HARDWARE / CAMERA</option>
-                <option value="NETWORK / CONNECTIVITY">NETWORK / CONNECTIVITY</option>
-                <option value="ACCESS CONTROL">ACCESS CONTROL</option>
-                <option value="HVAC / CHILLER">HVAC / CHILLER</option>
+                {(categories && categories.length > 0
+                  ? categories
+                  : ISSUE_CATEGORIES
+                ).map(cat => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
               </select>
+
+              {category === 'Custom' && (
+                <input
+                  type="text"
+                  value={customCategory}
+                  onChange={e => setCustomCategory(e.target.value)}
+                  placeholder="Enter custom issue category"
+                  className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
+                />
+              )}
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 block mb-1">
+                Assign Field Operator / Technician
+              </label>
+              <select
+                value={assignedUserId}
+                onChange={e => setAssignedUserId(e.target.value)}
+                disabled={currentUser.role === 'TECHNICIAN'}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none text-slate-800 disabled:bg-slate-100 disabled:text-slate-500"
+              >
+                <option value="">Leave Unassigned (Triage in Queue)</option>
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} — {u.role} ({u.department_name})
+                  </option>
+                ))}
+              </select>
+
+              {currentUser.role === 'TECHNICIAN' && (
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Technician-created tickets are automatically assigned to you.
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Assigned Technician */}
+          {/* Priority */}
           <div>
-            <label className="font-bold text-slate-700 block mb-1">Assign Field Operator / Technician</label>
+            <label className="font-bold text-slate-700 block mb-1">
+              Priority Tier *
+            </label>
             <select
-              value={assignedUserId}
-              onChange={e => setAssignedUserId(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none text-slate-800"
+              value={priority}
+              onChange={e => setPriority(e.target.value as any)}
+              className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none font-bold text-slate-800"
             >
-              <option value="">Leave Unassigned (Triage in Queue)</option>
-              {users.map(u => (
-                <option key={u.id} value={u.id}>
-                  {u.name} — {u.role} ({u.department_name})
-                </option>
-              ))}
+              <option value="CRITICAL">🔴 CRITICAL (2h resolution)</option>
+              <option value="HIGH">🟡 HIGH (4h resolution)</option>
+              <option value="MEDIUM">🔵 MEDIUM (24h resolution)</option>
+              <option value="LOW">⚪ LOW (72h resolution)</option>
             </select>
           </div>
 
@@ -242,6 +421,42 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
               onChange={e => setDescription(e.target.value)}
               className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
             />
+          </div>
+
+          {/* Voice Note */}
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+            <div>
+              <span className="font-bold text-slate-900 block">Voice Note</span>
+              <span className="text-[10px] text-slate-500">
+                Record up to 15 seconds of spoken findings or instructions.
+              </span>
+            </div>
+
+            <VoiceRecorder
+              maxDurationSeconds={15}
+              onSendVoiceNote={(audioDataUrl, durationSeconds) => {
+                setAttachedVoiceNote(audioDataUrl);
+                setAttachedVoiceDuration(durationSeconds);
+              }}
+            />
+
+            {attachedVoiceNote && (
+              <div className="flex items-center justify-between px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <span className="text-[11px] font-semibold text-emerald-700">
+                  Voice note attached ({attachedVoiceDuration}s)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachedVoiceNote(null);
+                    setAttachedVoiceDuration(15);
+                  }}
+                  className="text-[11px] font-bold text-red-600 hover:text-red-700"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Photographic Evidence Controls (Matching Image 13) */}

@@ -14,8 +14,6 @@ import {
   Lock,
   MessageSquare,
   History,
-  FileCheck,
-  RotateCcw,
   Check,
   Sparkles
 } from 'lucide-react';
@@ -54,11 +52,6 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   const [rootCause, setRootCause] = useState('');
   const [correctiveAction, setCorrectiveAction] = useState('');
 
-  const [showCloseModal, setShowCloseModal] = useState(false);
-  const [verificationNotes, setVerificationNotes] = useState('');
-
-  const [showReopenModal, setShowReopenModal] = useState(false);
-  const [reopenReason, setReopenReason] = useState('');
 
   if (!ticket) return null;
 
@@ -83,25 +76,6 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     setCorrectiveAction('');
   };
 
-  const handleConfirmClose = (e: React.FormEvent) => {
-    e.preventDefault();
-    onUpdateStatus(ticket.id, 'CLOSED', {
-      verification_notes: verificationNotes
-    });
-    setShowCloseModal(false);
-    setVerificationNotes('');
-  };
-
-  const handleConfirmReopen = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reopenReason.trim()) return;
-    onUpdateStatus(ticket.id, 'REOPENED', {
-      reopened_reason: reopenReason
-    });
-    setShowReopenModal(false);
-    setReopenReason('');
-  };
-
   const priorityBadgeStyle = {
     CRITICAL: 'bg-rose-50 text-rose-700 border-rose-200',
     HIGH: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -113,28 +87,16 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     NEW: 'bg-blue-50 text-blue-700 border-blue-200',
     OPEN: 'bg-sky-50 text-sky-700 border-sky-200',
     ASSIGNED: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-    ACKNOWLEDGED: 'bg-teal-50 text-teal-700 border-teal-200',
-    'UNDER INVESTIGATION': 'bg-cyan-50 text-cyan-700 border-cyan-200',
     'IN PROGRESS': 'bg-amber-50 text-amber-700 border-amber-200',
-    PENDING: 'bg-orange-50 text-orange-700 border-orange-200',
-    RESOLVED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    VERIFICATION: 'bg-purple-50 text-purple-700 border-purple-200',
-    CLOSED: 'bg-slate-100 text-slate-700 border-slate-200',
-    REOPENED: 'bg-rose-100 text-rose-800 border-rose-200',
-    ARCHIVED: 'bg-slate-200 text-slate-800 border-slate-300'
+    RESOLVED: 'bg-emerald-50 text-emerald-700 border-emerald-200'
   }[ticket.status] || 'bg-slate-100 text-slate-700 border-slate-200';
 
   const lifecycleStages: TicketStatus[] = [
     'NEW',
     'OPEN',
     'ASSIGNED',
-    'ACKNOWLEDGED',
-    'UNDER INVESTIGATION',
     'IN PROGRESS',
-    'PENDING',
-    'RESOLVED',
-    'VERIFICATION',
-    'CLOSED'
+    'RESOLVED'
   ];
 
   return (
@@ -268,8 +230,6 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                     onClick={() => {
                       if (st === 'RESOLVED') {
                         setShowResolveModal(true);
-                      } else if (st === 'CLOSED') {
-                        setShowCloseModal(true);
                       } else {
                         onUpdateStatus(ticket.id, st);
                       }
@@ -284,20 +244,11 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                   </button>
                 ))}
 
-                {ticket.status === 'CLOSED' || ticket.status === 'RESOLVED' ? (
-                  <button
-                    onClick={() => setShowReopenModal(true)}
-                    className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 flex items-center gap-1 shadow-2xs"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reopen Ticket</span>
-                  </button>
-                ) : null}
               </div>
             </div>
 
             {/* Resolution Information Banner if Resolved or Closed */}
-            {(ticket.status === 'RESOLVED' || ticket.status === 'CLOSED' || ticket.resolution_description) && (
+            {(ticket.status === 'RESOLVED' || ticket.resolution_description) && (
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-2 text-xs">
                 <div className="flex items-center gap-2 font-bold text-emerald-900 text-sm">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -322,18 +273,6 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                     <p className="text-emerald-900 mt-0.5">{ticket.corrective_action}</p>
                   </div>
                 )}
-              </div>
-            )}
-
-            {/* Reopen Banner if Reopened */}
-            {ticket.status === 'REOPENED' && ticket.reopened_reason && (
-              <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl space-y-1 text-xs">
-                <div className="flex items-center gap-2 font-bold text-rose-900 text-sm">
-                  <AlertTriangle className="w-4 h-4 text-rose-600" />
-                  <span>Ticket Reopened Notice</span>
-                </div>
-                <p className="text-rose-800 font-medium">Reopened by: {ticket.reopened_by || 'Manager'}</p>
-                <p className="text-rose-900 font-semibold mt-1">Reason: {ticket.reopened_reason}</p>
               </div>
             )}
 
@@ -574,98 +513,6 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
           </div>
         )}
 
-        {/* MODAL: CLOSURE WORKFLOW */}
-        {showCloseModal && (
-          <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-60">
-            <div className="bg-white rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl border border-slate-200">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <FileCheck className="w-5 h-5 text-slate-700" />
-                  <span>Verify & Formally Close Ticket</span>
-                </h3>
-                <button onClick={() => setShowCloseModal(false)} className="text-slate-400 hover:text-slate-600">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <form onSubmit={handleConfirmClose} className="space-y-3 text-xs">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Verification / Sign-off Notes</label>
-                  <textarea
-                    rows={2}
-                    placeholder="Optional verification notes from requester or supervisor approving closure..."
-                    value={verificationNotes}
-                    onChange={e => setVerificationNotes(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-slate-500 text-slate-800"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowCloseModal(false)}
-                    className="px-4 py-2 font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl shadow-md"
-                  >
-                    Close & Archive Record
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL: REOPEN WORKFLOW */}
-        {showReopenModal && (
-          <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-60">
-            <div className="bg-white rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl border border-slate-200">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <RotateCcw className="w-5 h-5 text-rose-600" />
-                  <span>Reopen Resolved/Closed Ticket</span>
-                </h3>
-                <button onClick={() => setShowReopenModal(false)} className="text-slate-400 hover:text-slate-600">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <form onSubmit={handleConfirmReopen} className="space-y-3 text-xs">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Reopen Reason *</label>
-                  <textarea
-                    rows={2}
-                    required
-                    placeholder="State reason why ticket is being reopened for further inspection..."
-                    value={reopenReason}
-                    onChange={e => setReopenReason(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-rose-500 text-slate-800"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowReopenModal(false)}
-                    className="px-4 py-2 font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-md"
-                  >
-                    Confirm Reopen
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

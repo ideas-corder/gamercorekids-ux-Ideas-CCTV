@@ -73,13 +73,14 @@ export interface TicketComment {
 export interface Ticket {
   id: string;
   ticket_number: string;
+  record_type?: 'OBSERVATION' | 'TECHNICAL';
   subject: string;
   description: string;
   department_id: string;
   department_name: string;
   category: string;
   priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  status: 'NEW' | 'OPEN' | 'IN PROGRESS' | 'RESOLVED' | 'CLOSED';
+  status: 'NEW' | 'OPEN' | 'IN PROGRESS' | 'RESOLVED';
   assigned_technician_id: string | null;
   assigned_technician_name: string;
   location_id: string;
@@ -730,6 +731,14 @@ class DatabaseManager {
     this.initMySQL();
   }
 
+  private async runImportQuery(sql: string, params: any[] = []): Promise<any> {
+    if (!this.pool || !this.isConnectedToMySQL) {
+      throw new Error('MySQL database is not connected');
+    }
+
+    return await this.pool.execute(sql, params);
+  }
+
   private async runQuery(sql: string, params: any[] = []): Promise<any> {
     if (!this.pool || !this.isConnectedToMySQL) return null;
     try {
@@ -857,8 +866,8 @@ class DatabaseManager {
         // Insert Tickets
         for (const t of this.tickets) {
           await this.runQuery(
-            "INSERT IGNORE INTO tickets (id, ticket_number, subject, description, department_id, department_name, category, priority, status, assigned_technician_id, assigned_technician_name, location_id, location_name, region_name, sla_deadline, sla_status, sla_remaining_hours, evidence_images, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [t.id, t.ticket_number, t.subject, t.description, t.department_id, t.department_name, t.category, t.priority, t.status, t.assigned_technician_id, t.assigned_technician_name, t.location_id, t.location_name, t.region_name, t.sla_deadline ? new Date(t.sla_deadline) : null, t.sla_status, t.sla_remaining_hours, JSON.stringify(t.evidence_images || []), t.created_by_user_id, t.created_by_name]
+            "INSERT IGNORE INTO tickets (id, ticket_number, record_type, subject, description, department_id, department_name, category, priority, status, assigned_technician_id, assigned_technician_name, location_id, location_name, region_name, sla_deadline, sla_status, sla_remaining_hours, evidence_images, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [t.id, t.ticket_number, t.record_type || 'OBSERVATION', t.subject, t.description, t.department_id, t.department_name, t.category, t.priority, t.status, t.assigned_technician_id, t.assigned_technician_name, t.location_id, t.location_name, t.region_name, t.sla_deadline ? new Date(t.sla_deadline) : null, t.sla_status, t.sla_remaining_hours, JSON.stringify(t.evidence_images || []), t.created_by_user_id, t.created_by_name]
           );
         }
         console.log('[Database] Hostinger MySQL initial seeding completed.');
@@ -1089,7 +1098,7 @@ if (usrs && usrs.length > 0) {
           t => t.status === 'IN PROGRESS'
         ).length,
         closed_count: assigned.filter(
-          t => t.status === 'CLOSED' || t.status === 'RESOLVED'
+          t => t.status === 'RESOLVED'
         ).length,
         delayed_count: assigned.filter(
           t => t.sla_status === 'BREACHED'
@@ -1270,6 +1279,7 @@ if (usrs && usrs.length > 0) {
     const newTicket: Ticket = {
       id,
       ticket_number: ticketNumber,
+      record_type: data.record_type || 'OBSERVATION',
       subject: data.subject || 'Observation Incident',
       description: data.description || '',
       department_id: data.department_id || 'dept_surveillance',
@@ -1297,9 +1307,9 @@ if (usrs && usrs.length > 0) {
 
     // Persist to MySQL
     this.runQuery(
-      "INSERT INTO tickets (id, ticket_number, subject, description, department_id, department_name, category, priority, status, assigned_technician_id, assigned_technician_name, location_id, location_name, region_name, sla_deadline, sla_status, sla_remaining_hours, evidence_images, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO tickets (id, ticket_number, record_type, subject, description, department_id, department_name, category, priority, status, assigned_technician_id, assigned_technician_name, location_id, location_name, region_name, sla_deadline, sla_status, sla_remaining_hours, evidence_images, created_by_user_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
-        newTicket.id, newTicket.ticket_number, newTicket.subject, newTicket.description,
+        newTicket.id, newTicket.ticket_number, newTicket.record_type, newTicket.subject, newTicket.description,
         newTicket.department_id, newTicket.department_name, newTicket.category, newTicket.priority,
         newTicket.status, newTicket.assigned_technician_id, newTicket.assigned_technician_name,
         newTicket.location_id, newTicket.location_name, newTicket.region_name,
@@ -1307,6 +1317,17 @@ if (usrs && usrs.length > 0) {
         JSON.stringify(newTicket.evidence_images || []), newTicket.created_by_user_id, newTicket.created_by_name
       ]
     );
+
+    // Persist any initial comments (including future voice notes) to ticket_comments.
+    // addComment() generates the final comment ID and keeps memory + MySQL in sync.
+    if (Array.isArray(data.comments)) {
+      for (const comment of data.comments) {
+        this.addComment(newTicket.id, {
+          ...comment,
+          ticket_id: newTicket.id
+        });
+      }
+    }
 
     // Automatically record in immutable audit log
     this.addAuditLog({
@@ -1356,18 +1377,13 @@ if (usrs && usrs.length > 0) {
       updatedTicket.resolved_at = new Date().toISOString();
       updatedTicket.sla_status = 'COMPLETED';
     }
-    if (updates.status === 'CLOSED' && !oldTicket.closed_at) {
-      updatedTicket.closed_at = new Date().toISOString();
-      updatedTicket.sla_status = 'COMPLETED';
-    }
-
     this.tickets[idx] = updatedTicket;
 
     // Persist ticket update to MySQL
     this.runQuery(
-      "UPDATE tickets SET subject=COALESCE(?, subject), status=COALESCE(?, status), priority=COALESCE(?, priority), assigned_technician_id=?, assigned_technician_name=?, sla_status=COALESCE(?, sla_status), resolved_at=?, closed_at=?, updated_at=NOW() WHERE id=?",
+      "UPDATE tickets SET subject=COALESCE(?, subject), record_type=COALESCE(?, record_type), status=COALESCE(?, status), priority=COALESCE(?, priority), assigned_technician_id=?, assigned_technician_name=?, sla_status=COALESCE(?, sla_status), resolved_at=?, closed_at=?, updated_at=NOW() WHERE id=?",
       [
-        updatedTicket.subject, updatedTicket.status, updatedTicket.priority,
+        updatedTicket.subject, updatedTicket.record_type || null, updatedTicket.status, updatedTicket.priority,
         updatedTicket.assigned_technician_id, updatedTicket.assigned_technician_name,
         updatedTicket.sla_status,
         updatedTicket.resolved_at ? new Date(updatedTicket.resolved_at) : null,
@@ -1530,6 +1546,1001 @@ if (usrs && usrs.length > 0) {
     });
 
     return this.settings[section];
+  }
+
+  // Database Import
+  // Production-safe JSON import: merge/upsert only.
+  // Destructive "replace" imports are intentionally disabled.
+  public async importData(
+    target: string,
+    payload: any,
+    mode: 'merge' | 'replace' = 'merge',
+    adminName = 'Surveillance Super Admin'
+  ): Promise<{
+    success: boolean;
+    target: string;
+    count: number;
+    created: number;
+    updated: number;
+    message: string;
+  }> {
+    if (mode === 'replace') {
+      throw new Error(
+        'Replace mode is disabled in production. Please use merge mode.'
+      );
+    }
+
+    let parsedPayload = payload;
+
+    if (typeof payload === 'string') {
+      try {
+        parsedPayload = JSON.parse(payload);
+      } catch (err: any) {
+        throw new Error(`Invalid JSON format: ${err.message}`);
+      }
+    }
+
+    let rawItems: any[] = [];
+    let detectedTarget = String(target || 'auto').toLowerCase();
+
+    if (
+      parsedPayload &&
+      typeof parsedPayload === 'object' &&
+      !Array.isArray(parsedPayload)
+    ) {
+      if (
+        Array.isArray(parsedPayload.users) ||
+        Array.isArray(parsedPayload.locations) ||
+        Array.isArray(parsedPayload.tickets)
+      ) {
+        detectedTarget = 'all';
+      } else if (Array.isArray(parsedPayload.data)) {
+        rawItems = parsedPayload.data;
+      } else if (Array.isArray(parsedPayload.records)) {
+        rawItems = parsedPayload.records;
+      } else if (Array.isArray(parsedPayload.items)) {
+        rawItems = parsedPayload.items;
+      }
+    } else if (Array.isArray(parsedPayload)) {
+      rawItems = parsedPayload;
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    if (
+      detectedTarget === 'all' ||
+      (
+        parsedPayload &&
+        (
+          Array.isArray(parsedPayload.users) ||
+          Array.isArray(parsedPayload.locations) ||
+          Array.isArray(parsedPayload.tickets)
+        )
+      )
+    ) {
+      if (Array.isArray(parsedPayload.users)) {
+        const result = await this.importUsers(parsedPayload.users);
+        createdCount += result.created;
+        updatedCount += result.updated;
+      }
+
+      if (Array.isArray(parsedPayload.locations)) {
+        const result = await this.importLocations(parsedPayload.locations);
+        createdCount += result.created;
+        updatedCount += result.updated;
+      }
+
+      if (Array.isArray(parsedPayload.tickets)) {
+        const result = await this.importTickets(parsedPayload.tickets);
+        createdCount += result.created;
+        updatedCount += result.updated;
+      }
+
+      this.addAuditLog({
+        id: `id-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: new Date().toISOString(),
+        scope_category: 'Admin Activities',
+        administrator: adminName,
+        user_id: 'admin-surveillance',
+        user_role: 'SUPER_ADMIN',
+        setting_changed: 'Full JSON Database Import',
+        target_entity: 'Users, Locations & Tickets',
+        action_code: 'DATABASE_JSON_IMPORT',
+        action_narrative: `Imported ${createdCount + updatedCount} records from JSON database snapshot.`,
+        previous_value: '—',
+        new_value: JSON.stringify({
+          created: createdCount,
+          updated: updatedCount
+        }),
+        ip_session: '127.0.0.1 (Authenticated Session)',
+        raw_json: {
+          target: 'all',
+          created: createdCount,
+          updated: updatedCount
+        }
+      });
+
+      return {
+        success: true,
+        target: 'all',
+        count: createdCount + updatedCount,
+        created: createdCount,
+        updated: updatedCount,
+        message: `Successfully imported ${createdCount + updatedCount} records (${createdCount} created, ${updatedCount} updated).`
+      };
+    }
+
+    if (detectedTarget === 'users' || detectedTarget.includes('user')) {
+      const result = await this.importUsers(rawItems);
+
+      this.addAuditLog({
+        id: `id-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: new Date().toISOString(),
+        scope_category: 'User Governance',
+        administrator: adminName,
+        user_id: 'admin-surveillance',
+        user_role: 'SUPER_ADMIN',
+        setting_changed: 'Users JSON Upload',
+        target_entity: 'Users',
+        action_code: 'DATABASE_JSON_IMPORT',
+        action_narrative: `Imported ${result.created + result.updated} user records from JSON.`,
+        previous_value: '—',
+        new_value: JSON.stringify(result),
+        ip_session: '127.0.0.1 (Authenticated Session)',
+        raw_json: {
+          target: 'users',
+          ...result
+        }
+      });
+
+      return {
+        success: true,
+        target: 'users',
+        count: result.created + result.updated,
+        created: result.created,
+        updated: result.updated,
+        message: `Successfully imported ${result.created + result.updated} users (${result.created} created, ${result.updated} updated).`
+      };
+    }
+
+    if (
+      detectedTarget === 'locations' ||
+      detectedTarget.includes('location')
+    ) {
+      const result = await this.importLocations(rawItems);
+
+      this.addAuditLog({
+        id: `id-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: new Date().toISOString(),
+        scope_category: 'System & Config',
+        administrator: adminName,
+        user_id: 'admin-surveillance',
+        user_role: 'SUPER_ADMIN',
+        setting_changed: 'Locations JSON Upload',
+        target_entity: 'Locations',
+        action_code: 'DATABASE_JSON_IMPORT',
+        action_narrative: `Imported ${result.created + result.updated} location records from JSON.`,
+        previous_value: '—',
+        new_value: JSON.stringify(result),
+        ip_session: '127.0.0.1 (Authenticated Session)',
+        raw_json: {
+          target: 'locations',
+          ...result
+        }
+      });
+
+      return {
+        success: true,
+        target: 'locations',
+        count: result.created + result.updated,
+        created: result.created,
+        updated: result.updated,
+        message: `Successfully imported ${result.created + result.updated} locations (${result.created} created, ${result.updated} updated).`
+      };
+    }
+
+    if (
+      detectedTarget === 'tickets' ||
+      detectedTarget.includes('ticket')
+    ) {
+      const result = await this.importTickets(rawItems);
+
+      this.addAuditLog({
+        id: `id-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: new Date().toISOString(),
+        scope_category: 'Ticket Ops',
+        administrator: adminName,
+        user_id: 'admin-surveillance',
+        user_role: 'SUPER_ADMIN',
+        setting_changed: 'Tickets JSON Upload',
+        target_entity: 'Tickets',
+        action_code: 'DATABASE_JSON_IMPORT',
+        action_narrative: `Imported ${result.created + result.updated} ticket records from JSON.`,
+        previous_value: '—',
+        new_value: JSON.stringify(result),
+        ip_session: '127.0.0.1 (Authenticated Session)',
+        raw_json: {
+          target: 'tickets',
+          ...result
+        }
+      });
+
+      return {
+        success: true,
+        target: 'tickets',
+        count: result.created + result.updated,
+        created: result.created,
+        updated: result.updated,
+        message: `Successfully imported ${result.created + result.updated} tickets (${result.created} created, ${result.updated} updated).`
+      };
+    }
+
+    if (rawItems.length > 0) {
+      const sample = rawItems[0] || {};
+
+      if (sample.email || sample.role) {
+        return this.importData('users', payload, 'merge', adminName);
+      }
+
+      if (sample.branch_code || sample.camera_zones) {
+        return this.importData('locations', payload, 'merge', adminName);
+      }
+
+      if (sample.ticket_number || sample.subject || sample.priority) {
+        return this.importData('tickets', payload, 'merge', adminName);
+      }
+    }
+
+    throw new Error(
+      "Unable to determine target module for JSON data. Please select target explicitly ('users', 'locations', 'tickets', or 'all')."
+    );
+  }
+
+  private async importUsers(
+    rawUsers: any[]
+  ): Promise<{ created: number; updated: number }> {
+    let created = 0;
+    let updated = 0;
+
+    for (const raw of rawUsers) {
+      if (!raw || (!raw.id && !raw.email && !raw.name)) {
+        continue;
+      }
+
+      const suppliedId = raw.id ? String(raw.id).trim() : '';
+      const suppliedEmail = raw.email
+        ? String(raw.email).toLowerCase().trim()
+        : '';
+
+      const existingByIdIdx = suppliedId
+        ? this.users.findIndex(u => u.id === suppliedId)
+        : -1;
+      const existingByEmailIdx = suppliedEmail
+        ? this.users.findIndex(
+            u => u.email.toLowerCase() === suppliedEmail
+          )
+        : -1;
+
+      if (
+        existingByIdIdx >= 0 &&
+        existingByEmailIdx >= 0 &&
+        existingByIdIdx !== existingByEmailIdx
+      ) {
+        throw new Error(
+          `User import conflict: id "${suppliedId}" and email "${suppliedEmail}" belong to different existing users.`
+        );
+      }
+
+      const existingIdx =
+        existingByIdIdx >= 0 ? existingByIdIdx : existingByEmailIdx;
+
+      const existingUser =
+        existingIdx >= 0 ? this.users[existingIdx] : undefined;
+
+      const id =
+        suppliedId ||
+        existingUser?.id ||
+        `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+      const email =
+        suppliedEmail ||
+        existingUser?.email ||
+        `user_${id}@ideas.com.pk`;
+
+      const hasPasswordField =
+        raw.password_hash !== undefined ||
+        raw.password !== undefined;
+
+      let passwordHash = existingUser?.password_hash || '';
+
+      if (hasPasswordField) {
+        const rawPassword = String(
+          raw.password_hash ?? raw.password ?? ''
+        );
+
+        if (
+          rawPassword.startsWith('$2a$') ||
+          rawPassword.startsWith('$2b$') ||
+          rawPassword.startsWith('$2y$')
+        ) {
+          passwordHash = rawPassword;
+        } else if (rawPassword) {
+          passwordHash = bcrypt.hashSync(rawPassword, 12);
+        } else if (!passwordHash) {
+          throw new Error(
+            `User "${email}" has an empty password. A password or bcrypt hash is required for a new user.`
+          );
+        }
+      }
+
+      if (!passwordHash) {
+        throw new Error(
+          `User "${email}" does not contain a password/password_hash and no existing password was found.`
+        );
+      }
+
+      let granularRights: string[] =
+        existingUser?.granular_rights || ['Tickets', 'Resolve'];
+
+      if (Array.isArray(raw.granular_rights)) {
+        granularRights = raw.granular_rights.map((v: any) => String(v));
+      } else if (typeof raw.granular_rights === 'string') {
+        try {
+          const parsed = JSON.parse(raw.granular_rights);
+          if (Array.isArray(parsed)) {
+            granularRights = parsed.map((v: any) => String(v));
+          }
+        } catch {
+          // Preserve existing/default rights when malformed.
+        }
+      }
+
+      const userObj: User = {
+        id,
+        name: String(
+          raw.name !== undefined
+            ? raw.name
+            : existingUser?.name || 'OpsDesk User'
+        ),
+        email,
+        password_hash: passwordHash,
+        department_id: String(
+          raw.department_id !== undefined
+            ? raw.department_id
+            : existingUser?.department_id || 'dept_surveillance'
+        ),
+        department_name: String(
+          raw.department_name !== undefined
+            ? raw.department_name
+            : existingUser?.department_name ||
+              'Security Operations & Surveillance'
+        ),
+        role:
+          raw.role !== undefined
+            ? raw.role
+            : existingUser?.role || 'TECHNICIAN',
+        status:
+          raw.status !== undefined
+            ? raw.status
+            : existingUser?.status || 'Active',
+        avatar_initials: String(
+          raw.avatar_initials !== undefined
+            ? raw.avatar_initials
+            : existingUser?.avatar_initials ||
+              (raw.name
+                ? String(raw.name).substring(0, 2).toUpperCase()
+                : 'US')
+        ),
+        workload_status:
+          raw.workload_status !== undefined
+            ? raw.workload_status
+            : existingUser?.workload_status || 'Idle',
+        granular_rights: granularRights,
+        last_login:
+          raw.last_login !== undefined
+            ? raw.last_login
+            : existingUser?.last_login,
+        assigned_count:
+          raw.assigned_count !== undefined
+            ? Number(raw.assigned_count)
+            : existingUser?.assigned_count || 0,
+        pending_count:
+          raw.pending_count !== undefined
+            ? Number(raw.pending_count)
+            : existingUser?.pending_count || 0,
+        in_process_count:
+          raw.in_process_count !== undefined
+            ? Number(raw.in_process_count)
+            : existingUser?.in_process_count || 0,
+        closed_count:
+          raw.closed_count !== undefined
+            ? Number(raw.closed_count)
+            : existingUser?.closed_count || 0,
+        delayed_count:
+          raw.delayed_count !== undefined
+            ? Number(raw.delayed_count)
+            : existingUser?.delayed_count || 0,
+        compliance_percent:
+          raw.compliance_percent !== undefined
+            ? Number(raw.compliance_percent)
+            : existingUser?.compliance_percent || 100
+      };
+
+      /*
+       * MySQL is updated before the in-memory array.
+       *
+       * For an existing user matched by email with a different imported ID,
+       * preserve the existing database row ID to avoid a unique-key conflict.
+       */
+      if (existingUser) {
+        await this.runImportQuery(
+          `UPDATE users
+           SET name=?,
+               email=?,
+               password_hash=?,
+               department_id=?,
+               department_name=?,
+               role=?,
+               status=?,
+               avatar_initials=?,
+               workload_status=?,
+               granular_rights=?,
+               last_login=?
+           WHERE id=?`,
+          [
+            userObj.name,
+            userObj.email,
+            userObj.password_hash,
+            userObj.department_id,
+            userObj.department_name,
+            userObj.role,
+            userObj.status,
+            userObj.avatar_initials,
+            userObj.workload_status,
+            JSON.stringify(userObj.granular_rights),
+            userObj.last_login || null,
+            existingUser.id
+          ]
+        );
+
+        this.users[existingIdx] = {
+          ...existingUser,
+          ...userObj,
+          id: existingUser.id
+        };
+        updated++;
+      } else {
+        await this.runImportQuery(
+          `INSERT INTO users
+            (id, name, email, password_hash, department_id, department_name,
+             role, status, avatar_initials, workload_status, granular_rights,
+             last_login)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userObj.id,
+            userObj.name,
+            userObj.email,
+            userObj.password_hash,
+            userObj.department_id,
+            userObj.department_name,
+            userObj.role,
+            userObj.status,
+            userObj.avatar_initials,
+            userObj.workload_status,
+            JSON.stringify(userObj.granular_rights),
+            userObj.last_login || null
+          ]
+        );
+
+        this.users.push(userObj);
+        created++;
+      }
+    }
+
+    return { created, updated };
+  }
+
+  private async importLocations(
+    rawLocations: any[]
+  ): Promise<{ created: number; updated: number }> {
+    let created = 0;
+    let updated = 0;
+
+    for (const raw of rawLocations) {
+      if (!raw || (!raw.id && !raw.branch_code && !raw.name)) {
+        continue;
+      }
+
+      const suppliedId = raw.id ? String(raw.id).trim() : '';
+      const suppliedBranchCode = raw.branch_code
+        ? String(raw.branch_code).trim()
+        : '';
+
+      const existingByIdIdx = suppliedId
+        ? this.locations.findIndex(l => l.id === suppliedId)
+        : -1;
+      const existingByBranchCodeIdx = suppliedBranchCode
+        ? this.locations.findIndex(
+            l => l.branch_code === suppliedBranchCode
+          )
+        : -1;
+
+      if (
+        existingByIdIdx >= 0 &&
+        existingByBranchCodeIdx >= 0 &&
+        existingByIdIdx !== existingByBranchCodeIdx
+      ) {
+        throw new Error(
+          `Location import conflict: id "${suppliedId}" and branch_code "${suppliedBranchCode}" belong to different existing locations.`
+        );
+      }
+
+      const existingIdx =
+        existingByIdIdx >= 0
+          ? existingByIdIdx
+          : existingByBranchCodeIdx;
+
+      const existingLocation =
+        existingIdx >= 0 ? this.locations[existingIdx] : undefined;
+
+      const id =
+        existingLocation?.id ||
+        suppliedId ||
+        `loc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+      const branchCode =
+        suppliedBranchCode ||
+        existingLocation?.branch_code ||
+        `BR${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const locObj: Location = {
+        id,
+        branch_code: branchCode,
+        name: String(
+          raw.name !== undefined
+            ? raw.name
+            : existingLocation?.name || 'Branch Location'
+        ),
+        region_id: String(
+          raw.region_id !== undefined
+            ? raw.region_id
+            : existingLocation?.region_id || 'reg_central'
+        ),
+        region_name: String(
+          raw.region_name !== undefined
+            ? raw.region_name
+            : existingLocation?.region_name || 'Central'
+        ),
+        physical_address: String(
+          raw.physical_address !== undefined
+            ? raw.physical_address
+            : existingLocation?.physical_address ||
+              'Commercial Market Area'
+        ),
+        contact_person: String(
+          raw.contact_person !== undefined
+            ? raw.contact_person
+            : existingLocation?.contact_person || 'Branch Manager'
+        ),
+        phone: String(
+          raw.phone !== undefined
+            ? raw.phone
+            : existingLocation?.phone || '+92 300 0000000'
+        ),
+        notification_email: String(
+          raw.notification_email !== undefined
+            ? raw.notification_email
+            : existingLocation?.notification_email ||
+              `branch.${branchCode.toLowerCase()}@ideas.com.pk`
+        ),
+        camera_zones:
+          raw.camera_zones !== undefined
+            ? Number(raw.camera_zones)
+            : existingLocation?.camera_zones || 1,
+        areas_details: String(
+          raw.areas_details !== undefined
+            ? raw.areas_details
+            : existingLocation?.areas_details || 'Main Floor'
+        ),
+        status:
+          raw.status !== undefined
+            ? raw.status
+            : existingLocation?.status || 'Active',
+        tickets_count:
+          raw.tickets_count !== undefined
+            ? Number(raw.tickets_count)
+            : existingLocation?.tickets_count || 0
+      };
+
+      if (existingLocation) {
+        await this.runImportQuery(
+          `UPDATE locations
+           SET branch_code=?,
+               name=?,
+               region_id=?,
+               region_name=?,
+               physical_address=?,
+               contact_person=?,
+               phone=?,
+               notification_email=?,
+               camera_zones=?,
+               areas_details=?,
+               status=?
+           WHERE id=?`,
+          [
+            locObj.branch_code,
+            locObj.name,
+            locObj.region_id,
+            locObj.region_name,
+            locObj.physical_address,
+            locObj.contact_person,
+            locObj.phone,
+            locObj.notification_email,
+            locObj.camera_zones,
+            locObj.areas_details,
+            locObj.status,
+            existingLocation.id
+          ]
+        );
+
+        this.locations[existingIdx] = {
+          ...existingLocation,
+          ...locObj,
+          id: existingLocation.id
+        };
+        updated++;
+      } else {
+        await this.runImportQuery(
+          `INSERT INTO locations
+            (id, branch_code, name, region_id, region_name, physical_address,
+             contact_person, phone, notification_email, camera_zones,
+             areas_details, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            locObj.id,
+            locObj.branch_code,
+            locObj.name,
+            locObj.region_id,
+            locObj.region_name,
+            locObj.physical_address,
+            locObj.contact_person,
+            locObj.phone,
+            locObj.notification_email,
+            locObj.camera_zones,
+            locObj.areas_details,
+            locObj.status
+          ]
+        );
+
+        this.locations.push(locObj);
+        created++;
+      }
+    }
+
+    return { created, updated };
+  }
+
+  private async importTickets(
+    rawTickets: any[]
+  ): Promise<{ created: number; updated: number }> {
+    let created = 0;
+    let updated = 0;
+
+    for (const raw of rawTickets) {
+      if (!raw || (!raw.id && !raw.ticket_number && !raw.subject)) {
+        continue;
+      }
+
+      const suppliedId = raw.id ? String(raw.id).trim() : '';
+      const suppliedTicketNumber = raw.ticket_number
+        ? String(raw.ticket_number).trim()
+        : '';
+
+      const existingByIdIdx = suppliedId
+        ? this.tickets.findIndex(t => t.id === suppliedId)
+        : -1;
+      const existingByTicketNumberIdx = suppliedTicketNumber
+        ? this.tickets.findIndex(
+            t => t.ticket_number === suppliedTicketNumber
+          )
+        : -1;
+
+      if (
+        existingByIdIdx >= 0 &&
+        existingByTicketNumberIdx >= 0 &&
+        existingByIdIdx !== existingByTicketNumberIdx
+      ) {
+        throw new Error(
+          `Ticket import conflict: id "${suppliedId}" and ticket_number "${suppliedTicketNumber}" belong to different existing tickets.`
+        );
+      }
+
+      const existingIdx =
+        existingByIdIdx >= 0
+          ? existingByIdIdx
+          : existingByTicketNumberIdx;
+
+      const existingTicket =
+        existingIdx >= 0 ? this.tickets[existingIdx] : undefined;
+
+      const id =
+        existingTicket?.id ||
+        suppliedId ||
+        `tix_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+      const ticketNumber =
+        suppliedTicketNumber ||
+        existingTicket?.ticket_number ||
+        `TICK-${Math.floor(10000 + Math.random() * 90000)}`;
+
+      let evidenceImages: string[] =
+        existingTicket?.evidence_images || [];
+
+      if (Array.isArray(raw.evidence_images)) {
+        evidenceImages = raw.evidence_images.map((v: any) =>
+          String(v)
+        );
+      } else if (typeof raw.evidence_images === 'string') {
+        try {
+          const parsed = JSON.parse(raw.evidence_images);
+          if (Array.isArray(parsed)) {
+            evidenceImages = parsed.map((v: any) => String(v));
+          }
+        } catch {
+          // Preserve existing evidence when malformed.
+        }
+      }
+
+      const tixObj: Ticket = {
+        id,
+        ticket_number: ticketNumber,
+        record_type:
+          raw.record_type === 'TECHNICAL'
+            ? 'TECHNICAL'
+            : existingTicket?.record_type || 'OBSERVATION',
+        subject: String(
+          raw.subject !== undefined
+            ? raw.subject
+            : existingTicket?.subject ||
+              'Surveillance Alert / Incident'
+        ),
+        description: String(
+          raw.description !== undefined
+            ? raw.description
+            : existingTicket?.description ||
+              'System generated or imported observation record.'
+        ),
+        department_id: String(
+          raw.department_id !== undefined
+            ? raw.department_id
+            : existingTicket?.department_id ||
+              'dept_surveillance'
+        ),
+        department_name: String(
+          raw.department_name !== undefined
+            ? raw.department_name
+            : existingTicket?.department_name ||
+              'Security Operations & Surveillance'
+        ),
+        category: String(
+          raw.category !== undefined
+            ? raw.category
+            : existingTicket?.category ||
+              'Surveillance Hardware'
+        ),
+        priority:
+          raw.priority !== undefined
+            ? raw.priority
+            : existingTicket?.priority || 'MEDIUM',
+        status:
+          raw.status !== undefined
+            ? raw.status
+            : existingTicket?.status || 'NEW',
+        assigned_technician_id:
+          raw.assigned_technician_id !== undefined
+            ? raw.assigned_technician_id
+            : existingTicket?.assigned_technician_id || null,
+        assigned_technician_name: String(
+          raw.assigned_technician_name !== undefined
+            ? raw.assigned_technician_name
+            : existingTicket?.assigned_technician_name ||
+              'Unassigned'
+        ),
+        location_id: String(
+          raw.location_id !== undefined
+            ? raw.location_id
+            : existingTicket?.location_id || 'loc_001'
+        ),
+        location_name: String(
+          raw.location_name !== undefined
+            ? raw.location_name
+            : existingTicket?.location_name ||
+              'Agency Jaranwala'
+        ),
+        region_name: String(
+          raw.region_name !== undefined
+            ? raw.region_name
+            : existingTicket?.region_name || 'Central'
+        ),
+        sla_deadline:
+          raw.sla_deadline !== undefined
+            ? raw.sla_deadline
+            : existingTicket?.sla_deadline ||
+              new Date(Date.now() + 86400000).toISOString(),
+        sla_status:
+          raw.sla_status !== undefined
+            ? raw.sla_status
+            : existingTicket?.sla_status || 'ON TRACK',
+        sla_remaining_hours:
+          raw.sla_remaining_hours !== undefined
+            ? Number(raw.sla_remaining_hours)
+            : existingTicket?.sla_remaining_hours || 24,
+        evidence_images: evidenceImages,
+        created_by_user_id: String(
+          raw.created_by_user_id !== undefined
+            ? raw.created_by_user_id
+            : existingTicket?.created_by_user_id ||
+              'admin-surveillance'
+        ),
+        created_by_name: String(
+          raw.created_by_name !== undefined
+            ? raw.created_by_name
+            : existingTicket?.created_by_name ||
+              'Surveillance Super Admin'
+        ),
+        created_at:
+          raw.created_at !== undefined
+            ? raw.created_at
+            : existingTicket?.created_at ||
+              new Date().toISOString(),
+        updated_at:
+          raw.updated_at !== undefined
+            ? raw.updated_at
+            : existingTicket?.updated_at ||
+              new Date().toISOString(),
+        resolved_at:
+          raw.resolved_at !== undefined
+            ? raw.resolved_at
+            : existingTicket?.resolved_at || null,
+        closed_at:
+          raw.closed_at !== undefined
+            ? raw.closed_at
+            : existingTicket?.closed_at || null,
+        comments:
+          Array.isArray(raw.comments)
+            ? raw.comments
+            : existingTicket?.comments || []
+      };
+
+      if (existingTicket) {
+        await this.runImportQuery(
+          `UPDATE tickets
+           SET ticket_number=?,
+               record_type=?,
+               subject=?,
+               description=?,
+               department_id=?,
+               department_name=?,
+               category=?,
+               priority=?,
+               status=?,
+               assigned_technician_id=?,
+               assigned_technician_name=?,
+               location_id=?,
+               location_name=?,
+               region_name=?,
+               sla_deadline=?,
+               sla_status=?,
+               sla_remaining_hours=?,
+               evidence_images=?,
+               created_by_user_id=?,
+               created_by_name=?,
+               resolved_at=?,
+               closed_at=?,
+               created_at=?,
+               updated_at=?
+           WHERE id=?`,
+          [
+            tixObj.ticket_number,
+            tixObj.record_type,
+            tixObj.subject,
+            tixObj.description,
+            tixObj.department_id,
+            tixObj.department_name,
+            tixObj.category,
+            tixObj.priority,
+            tixObj.status,
+            tixObj.assigned_technician_id,
+            tixObj.assigned_technician_name,
+            tixObj.location_id,
+            tixObj.location_name,
+            tixObj.region_name,
+            tixObj.sla_deadline
+              ? new Date(tixObj.sla_deadline)
+              : null,
+            tixObj.sla_status,
+            tixObj.sla_remaining_hours,
+            JSON.stringify(tixObj.evidence_images),
+            tixObj.created_by_user_id,
+            tixObj.created_by_name,
+            tixObj.resolved_at
+              ? new Date(tixObj.resolved_at)
+              : null,
+            tixObj.closed_at
+              ? new Date(tixObj.closed_at)
+              : null,
+            tixObj.created_at
+              ? new Date(tixObj.created_at)
+              : null,
+            tixObj.updated_at
+              ? new Date(tixObj.updated_at)
+              : null,
+            existingTicket.id
+          ]
+        );
+
+        this.tickets[existingIdx] = {
+          ...existingTicket,
+          ...tixObj,
+          id: existingTicket.id
+        };
+        updated++;
+      } else {
+        await this.runImportQuery(
+          `INSERT INTO tickets
+            (id, ticket_number, record_type, subject, description, department_id,
+             department_name, category, priority, status,
+             assigned_technician_id, assigned_technician_name, location_id,
+             location_name, region_name, sla_deadline, sla_status,
+             sla_remaining_hours, evidence_images, created_by_user_id,
+             created_by_name, resolved_at, closed_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            tixObj.id,
+            tixObj.ticket_number,
+            tixObj.record_type,
+            tixObj.subject,
+            tixObj.description,
+            tixObj.department_id,
+            tixObj.department_name,
+            tixObj.category,
+            tixObj.priority,
+            tixObj.status,
+            tixObj.assigned_technician_id,
+            tixObj.assigned_technician_name,
+            tixObj.location_id,
+            tixObj.location_name,
+            tixObj.region_name,
+            tixObj.sla_deadline
+              ? new Date(tixObj.sla_deadline)
+              : null,
+            tixObj.sla_status,
+            tixObj.sla_remaining_hours,
+            JSON.stringify(tixObj.evidence_images),
+            tixObj.created_by_user_id,
+            tixObj.created_by_name,
+            tixObj.resolved_at
+              ? new Date(tixObj.resolved_at)
+              : null,
+            tixObj.closed_at
+              ? new Date(tixObj.closed_at)
+              : null,
+            tixObj.created_at
+              ? new Date(tixObj.created_at)
+              : null,
+            tixObj.updated_at
+              ? new Date(tixObj.updated_at)
+              : null
+          ]
+        );
+
+        this.tickets.push(tixObj);
+        created++;
+      }
+    }
+
+    return { created, updated };
   }
 
   // Database Export & Backup

@@ -208,7 +208,7 @@ app.post(
   async (req: Request, res: Response) => {
     try {
       const user = (req as any).authenticatedUser;
-      const password = String(req.body?.password || '');
+      const password = String(req.body?.password_hash || '');
 
       if (!password) {
         return res.status(400).json({
@@ -386,11 +386,11 @@ app.get('/api/users', (req: Request, res: Response) => {
   res.json(db.getUsers());
 });
 
-app.post('/api/users', (req: Request, res: Response) => {
+app.post('/api/users', async (req: Request, res: Response) => {
   try {
     const name = String(req.body?.name || '').trim();
     const email = String(req.body?.email || '').trim().toLowerCase();
-    const password = String(req.body?.password || '');
+    const password = String(req.body?.password_hash || '');
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -406,7 +406,7 @@ app.post('/api/users', (req: Request, res: Response) => {
       .substring(0, 2)
       .toUpperCase();
 
-    const user = db.addUser({
+    const user = await db.addUser({
       id: req.body.id || `user_${Date.now()}`,
       name,
       email,
@@ -520,6 +520,61 @@ app.get('/api/database/export', (req: Request, res: Response) => {
   }
   res.send(content);
 });
+
+// 9a. Database Import & JSON Upload
+app.post(
+  '/api/database/import',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).authenticatedUser;
+
+      if (!user || user.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({
+          error:
+            'Super Admin privileges required to upload or import database.'
+        });
+      }
+
+      const {
+        target = 'auto',
+        payload,
+        mode = 'merge'
+      } = req.body || {};
+
+      if (!payload) {
+        return res.status(400).json({
+          error:
+            'Missing JSON database payload. Please select a valid .json file.'
+        });
+      }
+
+      if (mode !== 'merge') {
+        return res.status(400).json({
+          error:
+            'Only merge mode is supported in production. Replace mode is disabled.'
+        });
+      }
+
+      const result = await db.importData(
+        String(target),
+        payload,
+        'merge',
+        user.name || 'Surveillance Super Admin'
+      );
+
+      return res.json(result);
+    } catch (err: any) {
+      console.error('[Database Import Error]:', err);
+
+      return res.status(400).json({
+        error:
+          err?.message ||
+          'Failed to parse or import JSON database file.'
+      });
+    }
+  }
+);
 
 // 9b. Download SQL Schema and Seed for Hostinger phpMyAdmin
 app.get('/api/database/download-schema', (req: Request, res: Response) => {
